@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "GitHub User Repo Backup → S3 (Monthly Lambda + EventBridge Schedule)"
+
+Parameters:
+  GitHubUsername:
+    Type: String
+    Description: "GitHub username whose owned repos will be backed up"
+
+  BackupBucketName:
+    Type: String
+    Description: "Existing S3 bucket to store backups"
+
+  S3Prefix:
+    Type: String
+    Default: "github-backups"
+    Description: "Prefix inside the backup bucket, can be empty"
+
+  IncludeForks:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: "Include forked repos in backup?"
+
+  IncludeArchived:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: "Include archived repos?"
+
+  GitHubToken:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: "Optional raw GitHub PAT (if not using Secrets Manager)"
+
+  GitHubTokenSecretArn:
+    Type: String
+    Default: ""
+    Description: "Optional Secrets Manager ARN for GitHub PAT"
+
+  LambdaCodeS3Bucket:
+    Type: String
+    Description: "S3 bucket containing the Lambda ZIP"
+
+  LambdaCodeS3Key:
+    Type: String
+    Description: "S3 key for the Lambda ZIP"
+
+  ScheduleExpression:
+    Type: String
+    Default: "cron(0 5 1 * ? *)"
+    Description: "EventBridge schedule (default = monthly, 05:00 UTC on the 1st)"
+
+Conditions:
+  UseSecret:
+    !Not [!Equals [!Ref GitHubTokenSecretArn, ""]]
+
+  UseEnvToken:
+    !Not [!Equals [!Ref GitHubToken, ""]]
+
+Resources:
+  GitHubBackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "github-backup-lambda-role-${AWS::StackName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: GitHubBackupS3AndLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${BackupBucketName}"
+                  - !Sub "arn:aws:s3:::${BackupBucketName}/*"
+
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "arn:aws:logs:*:*:*"
+
+        - !If
+          - UseSecret
+          - PolicyName: GitHubBackupSecretsAccess
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - secretsmanager:GetSecretValue
+                  Resource: !Ref GitHubTokenSecretArn
+          - !Ref "AWS::NoValue"
+
+  GitHubBackupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "github-monthly-backup-${AWS::StackName}"
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      MemorySize: 512
+      Timeout: 300
+      Role: !GetAtt GitHubBackupRole.Arn
+
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+
+      Environment:
+        Variables:
+          GITHUB_USERNAME: !Ref GitHubUsername
+          S3_BUCKET: !Ref BackupBucketName
+          S3_PREFIX: !Ref S3Prefix
+          INCLUDE_FORKS: !Ref IncludeForks
+          INCLUDE_ARCHIVED: !Ref IncludeArchived
+
+          # Raw token (optional)
+          GITHUB_TOKEN: !If
+            - UseEnvToken
+            - !Ref GitHubToken
+            - ""
+
+          # Secrets Manager ARN (optional)
+          GITHUB_TOKEN_SECRET_ARN: !If
+            - UseSecret
+            - !Ref GitHubTokenSecretArn
+            - ""
+
+  MonthlyGitHubBackupRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "github-monthly-backup-rule-${AWS::StackName}"
+      Description: "Monthly GitHub backup schedule"
+      State: ENABLED
+      ScheduleExpression: !Ref ScheduleExpression
+      Targets:
+        - Id: GithubBackupLambdaTarget
+          Arn: !GetAtt GitHubBackupFunction.Arn
+
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref GitHubBackupFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt MonthlyGitHubBackupRule.Arn
+
+Outputs:
+  LambdaFunctionName:
+    Value: !Ref GitHubBackupFunction
+    Description: "Lambda function that performs the GitHub backup"
+
+  EventRuleName:
+    Value: !Ref MonthlyGitHubBackupRule
+    Description: "EventBridge rule that triggers the Lambda"
+
+  BackupBucket:
+    Value: !Ref BackupBucketName
+    Description: "S3 bucket receiving the backups"
