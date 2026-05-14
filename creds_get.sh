@@ -10,20 +10,32 @@ else
   echo "[creds_get] WARNING: ~/.aws/credentials.gpg not found"
 fi
 
-# Optional: decrypt GitHub token into env var
-# ~/.github-token.gpg holds just the raw GitHub PAT
-if [[ -f "$HOME/.github-token.gpg" ]]; then
-  export GITHUB_TOKEN="$(gpg -d "$HOME/.github-token.gpg")"
-  echo "[creds_get] Exported GITHUB_TOKEN from ~/.github-token.gpg"
+# Decrypt GitHub PAT into GITHUB_TOKEN.
+# Set GITHUB_TOKEN_GPG_PATH to point at any GPG-encrypted file:
+#   - a symmetric file you made with `gpg -c` (default location below)
+#   - a `pass` entry under ~/.password-store/<name>.gpg
+#   - any other GPG-encrypted file
+# Both symmetric and asymmetric (pass) files work — gpg -d auto-detects.
+GITHUB_TOKEN_GPG_PATH="${GITHUB_TOKEN_GPG_PATH:-$HOME/.github-token.gpg}"
+
+if [[ -f "$GITHUB_TOKEN_GPG_PATH" ]]; then
+  # First line only — `pass` keeps the password on line 1, metadata after.
+  __decrypted="$(gpg -d "$GITHUB_TOKEN_GPG_PATH")"
+  export GITHUB_TOKEN="${__decrypted%%$'\n'*}"
+  unset __decrypted
+  echo "[creds_get] Exported GITHUB_TOKEN from $GITHUB_TOKEN_GPG_PATH"
+else
+  echo "[creds_get] $GITHUB_TOKEN_GPG_PATH not found; export GITHUB_TOKEN manually or set GITHUB_TOKEN_GPG_PATH"
 fi
 
-# If you prefer a full env file instead:
-# if [[ -f "$HOME/.github-env.gpg" ]]; then
-#   tmpfile=$(mktemp)
-#   gpg -d "$HOME/.github-env.gpg" > "$tmpfile"
-#   set -a
-#   source "$tmpfile"
-#   set +a
-#   rm -f "$tmpfile"
-#   echo "[creds_get] Loaded GitHub env vars from ~/.github-env.gpg"
-# fi
+# Optional encrypted env file with GITHUB_USERNAME / S3_BUCKET / AWS_REGION / etc.
+# Plaintext format: standard KEY=value lines, one per line.
+if [[ -f "$HOME/.github-env.gpg" ]]; then
+  tmpfile=$(mktemp)
+  gpg -d "$HOME/.github-env.gpg" > "$tmpfile"
+  set -a
+  source "$tmpfile"
+  set +a
+  rm -f "$tmpfile"
+  echo "[creds_get] Loaded env vars from ~/.github-env.gpg"
+fi

@@ -25,11 +25,11 @@ PACKAGE_DIR="${PACKAGE_DIR:-package}"
 ZIP_FILE="${ZIP_FILE:-github-backup-lambda.zip}"
 
 # ---------- Get creds ----------
-if [[ -x ./creds_get.sh ]]; then
+if [[ -f ./creds_get.sh ]]; then
   # use 'source' so env changes apply in this shell
   source ./creds_get.sh
 else
-  echo "[deploy] WARNING: creds_get.sh not found or not executable; continuing without it."
+  echo "[deploy] WARNING: creds_get.sh not found; continuing without it."
 fi
 
 echo "[deploy] Building Lambda package..."
@@ -89,8 +89,8 @@ aws cloudformation deploy \
 echo "[deploy] CloudFormation deploy complete for stack ${STACK_NAME}"
 
 # ---------- Shred creds ----------
-if [[ -x ./creds_shred.sh ]]; then
+if [[ -f ./creds_shred.sh ]]; then
   source ./creds_shred.sh
 else
-  echo "[deploy] WARNING: creds_shred.sh not found or not executable; credentials not shredded."
+  echo "[deploy] WARNING: creds_shred.sh not found; credentials not shredded."
 fi

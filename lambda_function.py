@@ -40,7 +40,7 @@ def _s3_key_for_repo(repo_name, date_str, ts_str):
     parts.append(repo_name)
     parts.append(date_str)
     prefix = "/".join(parts)
-    filename = f"{repo_name}-{ts_str}.zip"
+    filename = f"{repo_name}-{ts_str}.tar.gz"
     return f"{prefix}/{filename}"
 
 
@@ -123,8 +123,13 @@ def _list_all_repos_for_user():
     return owned
 
 
-def _download_repo_zip(owner, repo_name):
-    url = f"https://api.github.com/repos/{owner}/{repo_name}/zipball"
+def _download_repo_archive(owner, repo_name):
+    """Stream the .tar.gz archive of the default branch from GitHub.
+
+    Returns (stream, size_bytes_or_None). size_bytes is None if the response
+    is chunked and Content-Length isn't provided.
+    """
+    url = f"https://api.github.com/repos/{owner}/{repo_name}/tarball"
     headers = _github_headers()
 
     resp = requests.get(url, headers=headers, stream=True, timeout=300)
@@ -133,7 +138,9 @@ def _download_repo_zip(owner, repo_name):
             f"Failed to download {owner}/{repo_name}: {resp.status_code} {resp.text[:500]}"
         )
 
-    return resp.raw  # streaming
+    content_length = resp.headers.get("Content-Length")
+    size_bytes = int(content_length) if content_length else None
+    return resp.raw, size_bytes
 
 
 # ------------------------------------------------------------
@@ -145,9 +152,10 @@ def _backup_repo(repo, date_str, ts_str):
     owner = repo["owner"]["login"]
 
     s3_key = _s3_key_for_repo(name, date_str, ts_str)
-    logger.info(f"Backing up {owner}/{name} → s3://{S3_BUCKET}/{s3_key}")
+    stream, size_bytes = _download_repo_archive(owner, name)
+    size_str = f"{size_bytes / (1024 * 1024):.1f} MB" if size_bytes else "size unknown"
+    logger.info(f"Backing up {owner}/{name} ({size_str}) → s3://{S3_BUCKET}/{s3_key}")
 
-    stream = _download_repo_zip(owner, name)
     s3.upload_fileobj(stream, S3_BUCKET, s3_key)
 
     logger.info(f"Completed backup for {owner}/{name}")

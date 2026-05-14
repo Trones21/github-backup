@@ -15,9 +15,24 @@ This ensures the machine never leaves decrypted AWS credentials or GitHub tokens
 
 ## `creds_get.sh`
 
-- Decrypts `~/.aws/credentials.gpg` → `~/.aws/credentials`  
-- Decrypts `~/.github-token.gpg` → exports `GITHUB_TOKEN`
-- Can be extended easily for more env vars
+- Decrypts `~/.aws/credentials.gpg` → `~/.aws/credentials` (if present)
+- Decrypts `$GITHUB_TOKEN_GPG_PATH` (default `~/.github-token.gpg`) → exports `GITHUB_TOKEN` (if file exists)
+- Decrypts `~/.github-env.gpg` → sources additional env vars (if present)
+
+Each step is skipped silently if the corresponding `.gpg` file is missing, so you can adopt the wrapper incrementally.
+
+The GitHub-token step works with any GPG-encrypted file: a symmetric file (`gpg -c`) or an asymmetric one like a `pass` entry. Point `GITHUB_TOKEN_GPG_PATH` at `~/.password-store/<name>.gpg` and `creds_get.sh` will `gpg -d` it directly — no `pass` invocation needed. See [README.md → Storing the PAT](README.md#storing-the-pat) for the three options.
+
+The `~/.github-env.gpg` file is a standard `KEY=value` env file, encrypted with `gpg -c`. Typical contents for on-demand mode:
+
+```
+GITHUB_USERNAME=mygithubuser
+S3_BUCKET=my-github-backups
+S3_PREFIX=github-backups
+INCLUDE_FORKS=false
+INCLUDE_ARCHIVED=true
+AWS_REGION=us-east-1
+```
 
 Usage:
 
